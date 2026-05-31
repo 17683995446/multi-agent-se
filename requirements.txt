@@ -1,0 +1,58 @@
+# 多Agent软件工程系统 - 依赖锁定
+# Python 3.10+ 环境
+# 生成时间: 2025-06-01
+
+# ========== 核心调度与Agent框架 ==========
+langgraph>=0.2.0
+langchain>=0.3.0
+langchain-core>=0.3.0
+pyautogen>=0.4.0
+metagpt>=0.8.0
+
+# ========== 代码解析与处理 ==========
+tree-sitter>=0.23.0
+tree-sitter-python>=0.23.0
+ast-decompiler>=0.7.0
+libcst>=1.4.0
+redbaron>=0.9.2
+
+# ========== 代码质量与规范 ==========
+ruff>=0.7.0
+black>=24.0.0
+isort>=5.13.0
+mypy>=1.13.0
+pylint>=3.3.0
+
+# ========== 测试框架 ==========
+pytest>=8.3.0
+pytest-cov>=6.0.0
+pytest-asyncio>=0.24.0
+pytest-mock>=3.14.0
+hypothesis>=6.119.0
+
+# ========== 数据与配置 ==========
+pydantic>=2.9.0
+pydantic-settings>=2.6.0
+pyyaml>=6.0.1
+toml>=0.10.2
+python-dotenv>=1.0.1
+
+# ========== 日志与监控 ==========
+structlog>=24.4.0
+loguru>=0.7.2
+prometheus-client>=0.21.0
+
+# ========== 异步与并发 ==========
+asyncio>=3.4.3
+aiohttp>=3.11.0
+aioredis>=2.0.1
+
+# ========== 工具库 ==========
+click>=8.1.0
+rich>=13.9.0
+typer>=0.13.0
+jinja2>=3.1.4
+networkx>=3.4.0
+
+# ========== 开发依赖 ==========
+pre-commit>=4.0.0
