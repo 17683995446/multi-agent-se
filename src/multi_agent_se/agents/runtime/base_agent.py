@@ -26,6 +26,11 @@ from multi_agent_se.agents.communication import (
     MessageBus,
     get_message_bus,
 )
+from multi_agent_se.agents.lifecycle import (
+    LifecycleState,
+    LifecycleEvent,
+    LifecycleTransitionRecord,
+)
 from multi_agent_se.scheduler import (
     Task,
     TaskType,
@@ -90,9 +95,25 @@ class BaseAgentImpl(ABC):
         self._successful_tasks = 0
         self._failed_tasks = 0
         
+        # 状态转换历史
+        self._transition_history: List[LifecycleTransitionRecord] = []
+        self._record_transition(AgentStatus.CREATED, AgentStatus.CREATED, "init")
+        
         # 消息处理
         self._message_handlers: Dict[MessageType, Callable] = {}
         self._register_default_handlers()
+    
+    def _record_transition(self, from_status: AgentStatus, to_status: AgentStatus, reason: str = "", success: bool = True, error: Optional[str] = None) -> None:
+        """记录状态转换."""
+        record = LifecycleTransitionRecord(
+            from_state=LifecycleState(from_status.value),
+            to_state=LifecycleState(to_status.value),
+            event=LifecycleEvent.RECOVER if to_status == AgentStatus.READY else LifecycleEvent.ERROR if to_status == AgentStatus.ERROR else LifecycleEvent.RUN,
+            success=success,
+            error=error,
+            metadata={"reason": reason, "agent_id": self._agent_id},
+        )
+        self._transition_history.append(record)
     
     # ========== 属性 ==========
     
@@ -130,7 +151,9 @@ class BaseAgentImpl(ABC):
     
     def initialize(self) -> None:
         """初始化Agent."""
+        old_status = self._status
         self._status = AgentStatus.READY
+        self._record_transition(old_status, self._status, "initialize")
         self.on_initialize()
     
     def on_initialize(self) -> None:
@@ -139,9 +162,11 @@ class BaseAgentImpl(ABC):
     
     def start(self) -> None:
         """启动Agent."""
-        if self._status != AgentStatus.READY:
+        if self._status not in (AgentStatus.READY, AgentStatus.PAUSED):
             raise AgentExecutionError(f"Cannot start agent in {self._status.value} state")
+        old_status = self._status
         self._status = AgentStatus.RUNNING
+        self._record_transition(old_status, self._status, "start")
         self.on_start()
     
     def on_start(self) -> None:
@@ -152,7 +177,9 @@ class BaseAgentImpl(ABC):
         """暂停Agent."""
         if self._status != AgentStatus.RUNNING:
             return
+        old_status = self._status
         self._status = AgentStatus.PAUSED
+        self._record_transition(old_status, self._status, "pause")
         self.on_pause()
     
     def on_pause(self) -> None:
@@ -163,7 +190,9 @@ class BaseAgentImpl(ABC):
         """恢复Agent."""
         if self._status != AgentStatus.PAUSED:
             return
+        old_status = self._status
         self._status = AgentStatus.RUNNING
+        self._record_transition(old_status, self._status, "resume")
         self.on_resume()
     
     def on_resume(self) -> None:
@@ -172,7 +201,9 @@ class BaseAgentImpl(ABC):
     
     def stop(self) -> None:
         """停止Agent."""
+        old_status = self._status
         self._status = AgentStatus.TERMINATED
+        self._record_transition(old_status, self._status, "stop")
         self.on_stop()
     
     def on_stop(self) -> None:
@@ -183,10 +214,16 @@ class BaseAgentImpl(ABC):
         """终止Agent."""
         self.stop()
     
+    def get_transition_history(self) -> List[LifecycleTransitionRecord]:
+        """获取状态转换历史."""
+        return self._transition_history.copy()
+    
     # ========== 核心执行 ==========
     
     def execute(self, context: AgentContext) -> TaskResult:
         """执行任务（统一入口）.
+        
+        增强：异常时自动记录状态转换，保持状态一致性。
         
         Args:
             context: 执行上下文
@@ -214,6 +251,15 @@ class BaseAgentImpl(ABC):
             
         except Exception as e:
             self._failed_tasks += 1
+            # 记录异常状态转换
+            old_status = self._status
+            self._status = AgentStatus.ERROR
+            self._record_transition(
+                old_status, self._status,
+                reason="execute_exception",
+                success=False,
+                error=str(e),
+            )
             return TaskResult(
                 success=False,
                 error_message=f"Agent execution error: {e}",
