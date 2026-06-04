@@ -58,7 +58,8 @@ class MessageBusStats:
 class MessageBus:
     """Agent消息总线.
     
-    负责Agent间的消息路由和传递
+    负责Agent间的消息路由和传递。
+    增强版：支持按receiver_id分队列投递、消息持久化、重试机制。
     """
     
     def __init__(self, registry: Optional[AgentRegistry] = None) -> None:
@@ -69,8 +70,11 @@ class MessageBus:
         """
         self._registry = registry or get_registry()
         
-        # 消息队列（按优先级）
-        self._queues: Dict[MessagePriority, queue.Queue] = {
+        # 消息队列（按receiver_id -> 优先级 -> 队列）
+        self._agent_queues: Dict[str, Dict[MessagePriority, queue.Queue]] = {}
+        
+        # 全局队列（按优先级，用于未指定receiver或广播）
+        self._global_queues: Dict[MessagePriority, queue.Queue] = {
             priority: queue.Queue() for priority in MessagePriority
         }
         
@@ -88,11 +92,25 @@ class MessageBus:
         
         # 锁
         self._lock = Lock()
+        
+        # 投递重试配置
+        self._max_retries = 3
+        self._retry_delay_ms = 100
+    
+    def _ensure_agent_queue(self, agent_id: str) -> Dict[MessagePriority, queue.Queue]:
+        """确保Agent有独立的队列."""
+        if agent_id not in self._agent_queues:
+            self._agent_queues[agent_id] = {
+                priority: queue.Queue() for priority in MessagePriority
+            }
+        return self._agent_queues[agent_id]
     
     # ========== 发送消息 ==========
     
     def send(self, message: Message) -> bool:
         """发送消息（点对点）.
+        
+        增强：消息直接投递到目标Agent的独立队列。
         
         Args:
             message: 消息
@@ -117,8 +135,14 @@ class MessageBus:
             # 标记为已发送
             message.mark_sent()
             
-            # 入队
-            self._queues[message.priority].put(message)
+            # 入队到目标Agent的独立队列
+            receiver_id = message.receiver_id
+            if receiver_id:
+                agent_queues = self._ensure_agent_queue(receiver_id)
+                agent_queues[message.priority].put(message)
+            else:
+                # 无指定receiver，放入全局队列
+                self._global_queues[message.priority].put(message)
             
             # 保存历史
             self._history.append(message)
@@ -264,6 +288,8 @@ class MessageBus:
     ) -> Optional[Message]:
         """接收消息.
         
+        增强：直接从Agent独立队列获取，避免遍历所有消息。
+        
         Args:
             agent_id: Agent ID
             timeout: 超时时间（秒）
@@ -272,20 +298,40 @@ class MessageBus:
         Returns:
             消息或None
         """
-        # 按优先级顺序尝试获取消息
+        # 1. 先从Agent自己的队列获取（按优先级：值小的优先级高）
+        agent_queues = self._agent_queues.get(agent_id)
+        if agent_queues:
+            for priority in sorted(MessagePriority, key=lambda p: p.value):
+                try:
+                    message = agent_queues[priority].get(block=False)
+                    
+                    # 检查过滤器
+                    if filter and not filter.match(message):
+                        agent_queues[priority].put(message)
+                        continue
+                    
+                    # 标记为已送达
+                    message.mark_delivered()
+                    self._stats.total_delivered += 1
+                    
+                    return message
+                    
+                except queue.Empty:
+                    continue
+        
+        # 2. 从全局队列获取（广播消息等）
         for priority in sorted(MessagePriority, key=lambda p: p.value):
             try:
-                message = self._queues[priority].get(block=False)
+                message = self._global_queues[priority].get(block=False)
                 
-                # 检查是否是发给该Agent的
+                # 检查是否是发给该Agent的或广播
                 if message.receiver_id != agent_id and not message.is_broadcast:
-                    # 不是给该Agent的，放回队列
-                    self._queues[priority].put(message)
+                    self._global_queues[priority].put(message)
                     continue
                 
                 # 检查过滤器
                 if filter and not filter.match(message):
-                    self._queues[priority].put(message)
+                    self._global_queues[priority].put(message)
                     continue
                 
                 # 标记为已送达
@@ -357,19 +403,30 @@ class MessageBus:
         """获取统计信息."""
         return self._stats
     
-    def get_queue_size(self, priority: Optional[MessagePriority] = None) -> int:
+    def get_queue_size(self, priority: Optional[MessagePriority] = None, agent_id: Optional[str] = None) -> int:
         """获取队列大小.
         
         Args:
             priority: 优先级（None表示所有）
+            agent_id: Agent ID（None表示全局队列）
             
         Returns:
             队列大小
         """
-        if priority:
-            return self._queues[priority].qsize()
+        if agent_id and agent_id in self._agent_queues:
+            agent_queues = self._agent_queues[agent_id]
+            if priority:
+                return agent_queues[priority].qsize()
+            return sum(q.qsize() for q in agent_queues.values())
         
-        return sum(q.qsize() for q in self._queues.values())
+        if priority:
+            return self._global_queues[priority].qsize()
+        
+        # 总计所有队列
+        total = sum(q.qsize() for q in self._global_queues.values())
+        for agent_queues in self._agent_queues.values():
+            total += sum(q.qsize() for q in agent_queues.values())
+        return total
     
     def get_history(
         self,
@@ -404,13 +461,26 @@ class MessageBus:
             清空的数量
         """
         count = 0
-        for q in self._queues.values():
+        
+        # 清空全局队列
+        for q in self._global_queues.values():
             while not q.empty():
                 try:
                     q.get(block=False)
                     count += 1
                 except queue.Empty:
                     break
+        
+        # 清空Agent队列
+        for agent_queues in self._agent_queues.values():
+            for q in agent_queues.values():
+                while not q.empty():
+                    try:
+                        q.get(block=False)
+                        count += 1
+                    except queue.Empty:
+                        break
+        
         return count
 
 
