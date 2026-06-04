@@ -77,10 +77,28 @@ __all__ = [
     "ensure_dir",
 ]
 
-# 初始化日志系统
-configure_logging(
-    log_level=settings.log_level,
-    log_format=settings.log_format,
-    log_file=settings.log_file,
-)
-logger = get_logger("mase")
+# 延迟初始化日志系统，避免在导入阶段强制加载配置（支持无pydantic环境）
+_logger_initialized = False
+logger = None
+
+
+def _ensure_logging_initialized():
+    """确保日志系统已初始化（惰性加载）."""
+    global _logger_initialized, logger
+    if not _logger_initialized:
+        try:
+            configure_logging(
+                log_level=settings.log_level,
+                log_format=getattr(settings, "log_format", "console"),
+                log_file=getattr(settings, "log_file", None),
+            )
+            logger = get_logger("mase")
+        except Exception:
+            # 即使日志初始化失败也不应阻断系统启动
+            logger = None
+        _logger_initialized = True
+    return logger
+
+
+# 首次访问时触发初始化（保持向后兼容）
+_ensure_logging_initialized()

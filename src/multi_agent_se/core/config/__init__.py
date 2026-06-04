@@ -32,8 +32,11 @@ from multi_agent_se.core.config.loader import (
     create_config,
 )
 
-# 向后兼容：从 settings.py 导出 Settings
-from multi_agent_se.core.config.settings import Settings, settings  # noqa: E402
+# 向后兼容：优先从 settings.py 导出 Settings，pydantic 不可用时从 simple_settings 回退
+try:
+    from multi_agent_se.core.config.settings import Settings, settings  # noqa: E402
+except ImportError:
+    from multi_agent_se.core.config.simple_settings import SimpleSettings as Settings, settings  # noqa: E402
 
 __all__ = [
     # 模型
