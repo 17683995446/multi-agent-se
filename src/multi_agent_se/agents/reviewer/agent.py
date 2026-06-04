@@ -229,6 +229,13 @@ class ReviewerAgent(BaseAgentImpl):
         """
         input_data = context.input_data
         
+        # 输入类型验证
+        if not isinstance(input_data, dict):
+            return TaskResult(
+                success=False,
+                error_message=f"输入数据必须是字典类型，实际为 {type(input_data).__name__}",
+            )
+        
         code = input_data.get("code", "")
         files = input_data.get("files", [])
         review_scope = input_data.get("review_scope", "full")

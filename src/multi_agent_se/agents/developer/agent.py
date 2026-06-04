@@ -133,6 +133,14 @@ class DeveloperAgent(BaseAgentImpl):
             任务执行结果
         """
         input_data = context.input_data
+        
+        # 输入类型验证
+        if not isinstance(input_data, dict):
+            return TaskResult(
+                success=False,
+                error_message=f"输入数据必须是字典类型，实际为 {type(input_data).__name__}",
+            )
+        
         task_type_str = input_data.get("task_type", "implementation")
         task_type = CodeTaskType(task_type_str)
         

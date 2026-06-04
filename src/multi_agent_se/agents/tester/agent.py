@@ -224,6 +224,13 @@ class TesterAgent(BaseAgentImpl):
         """
         input_data = context.input_data
         
+        # 输入类型验证
+        if not isinstance(input_data, dict):
+            return TaskResult(
+                success=False,
+                error_message=f"输入数据必须是字典类型，实际为 {type(input_data).__name__}",
+            )
+        
         # 获取任务参数
         code = input_data.get("code", "")
         target_files = input_data.get("target_files", [])
