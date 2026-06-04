@@ -190,9 +190,28 @@ class BugfixAgent(BaseAgentImpl):
         """
         input_data = context.input_data
         
+        # 输入类型验证
+        if not isinstance(input_data, dict):
+            return TaskResult(
+                success=False,
+                error_message=f"输入数据必须是字典类型，实际为 {type(input_data).__name__}",
+            )
+        
         # 获取错误信息
         error_message = input_data.get("error_message", "")
         stack_trace = input_data.get("stack_trace", "")
+        
+        # 类型验证：error_message 和 stack_trace 必须是字符串
+        if error_message is not None and not isinstance(error_message, str):
+            return TaskResult(
+                success=False,
+                error_message=f"error_message 必须是字符串类型，实际为 {type(error_message).__name__}",
+            )
+        if stack_trace is not None and not isinstance(stack_trace, str):
+            return TaskResult(
+                success=False,
+                error_message=f"stack_trace 必须是字符串类型，实际为 {type(stack_trace).__name__}",
+            )
         
         if not error_message and not stack_trace:
             return TaskResult(
